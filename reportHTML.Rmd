@@ -1,0 +1,562 @@
+---
+title: "Case Study: Predict Mental Health for Young Americans using GSS Data"
+author: "Ariel LIANG, Yuxuan LI, Yuying TAN"
+fontsize: 12pt
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lipsum}
+- \pagestyle{fancy}
+- \fancyhead[CO,CE]{LIANG(s2614693), LI(s2485265), TAN(s2586401)}
+geometry: margin=0.8in
+output: 
+  html_document
+---
+
+<center>
+**All group members, including Xiao LIANG, Yuxuan LI, and Yuying Tan, have contributed to this case study equally.**
+</center>
+
+## Introduction
+
+Mental disease is distinct to physical illness in nature. On one hand, the outbreak of it has been brought forward dramatically. The prevalence of young Americans aged $18$ to $25$ with a major depressive episode has climbed from $8.4\%$ to $14.6\%$ in the past decade, the largest increase among all age intervals.[^1] One the other hand, early diagnosis would make a great difference. Treatments have been proved effective on improving physical symptoms, emotion management, and social functioning at early stages of mental disorders.[^2]
+
+[^1]: https://www.nimh.nih.gov/health/statistics/major-depression.shtml
+[^2]: https://www.ajmc.com/journals/supplement/2007/2007-11-vol13-n4suppl/nov07-2638ps092-s097?p=2
+
+Although medical researchers found a first-degree relative with mental diseases to be the most predictive factor,[^3] we would like to flag individuals at high risks by a big-data approach and bring  back to light those who might skip primary care due to financial or societal issues. The US government conducts the **General Social Survey (GSS)** every year since $1972$. The data collected are readily accessible online, and contain demographic, socio-economic, and life-style information of people who were interviewed in person or by phone. Because these people are randomly sampled from the entire population of US residents, conclusions drawn from this dataset can be generalized at large.[^4]
+
+[^3]: https://www.bcmj.org/articles/early-detection-depression-young-and-elderly-people
+[^4]: https://gss.norc.org/
+
+In this case study, we build a **zero-inflated negative binomial (ZINB)** regression model to predict the number of days in a month that one feels mentally unhealthy and at least possibly seeks for help, using the GSS data. The analysis focuses on American residents aged $18$ to $24$ only, since disease patterns differ remarkablly across age groups. We then show by a $5$-fold cross-validation that our model makes reasonably reliable predictions and promotes decisionmaking.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(statsr)
+library(GGally)
+library(gridExtra)
+library(pscl)
+```
+
+```{r prep, include=TRUE, echo=TRUE, results='hide', warning=FALSE}
+# load the original dataset
+load("F:/MOOC/Data Science/R/brfss2013.RData")
+
+# select relevant variables and observations
+DATA_proj <- brfss2013 %>%
+  filter(X_age_g=="Age 18 to 24")%>%
+  select(cellfon2, cellfon3, sex, income2, height3, weight2,
+         X_state,children,sleptim1,menthlth,smoke100,X_educag,
+         X_race,internet,medcost,maxdrnks,fruit1,vegetab1,exeroft1) 
+# remove the redundant dataset
+save(DATA_proj, file="DATA_project.RData")
+rm(brfss2013)
+```
+
+# Data Preparation
+
+The original dataset is massive, including $330$ variables and $491775$ observations. Combining the codebook with suggestions given by psychologists, nine numerical and nine categorical variables are picked out in the preliminary selection. All the variables concerning chronic symptoms and physical disturbance are excluded in the first place, on the grounds that they usually affect the elderly only.
+
+NUMERICAL    | Description                                                                        
+-------------|----------------------------------------------------------------------------------
+`menthlth`   |The number of days ones feels mentally unhealthy during the past month             
+`height3`    |The height of an individual in feet and inches                                     
+`weight2`    |The weight of an individual in pounds                                              
+`children`   |The number of children one has                                                     
+`sleptim1`   |The average number of hours one sleeps per day during the past month               
+`maxdrnks`   |The maximum number of glasses of alcohol one drinks per day during the past month 
+`fruit1`     |The average grams of raw fruit one takes in per day during the past month          
+`vegetab1`   |The average grams of raw vegetables one takes in per day during the past month     
+`exeroft1`   |The average intensity of exercises during the past month 
+
+
+CATEGORICAL   | Description
+--------------|----------------------------------------------------------------------------------------
+`X_state`     | The state one resides in
+`X_race`      | The race one identifies oneself with
+`sex`         | The biological gender
+`X_educag`    | The highest education level ones has completed
+`income2`     | The level of family income per year 
+`cellfon2`    | Whether one owns a personal cellphone
+`internet`    | Whether one accesses the internet during the past month
+`medcost`     | Whether one has unpaid medical bills
+`smoke100`    | Whether one smokes during the past 100 days
+ 
+We start by transforming variables of interest into more informative formats. For example, dividing $50$ states, a federal district, and five territories into seven geographical categories facilitates the comparison of effect. And health-relevant knowledge contained in height and weight can be more succinctly represented by Body Mass Index (BMI). 
+
+\[
+BMI = \frac{weight}{height^2} \times 703
+\]
+
+```{r clean, include=TRUE, echo=TRUE, warning=FALSE}
+load("DATA_project.RData")
+# Data transformation
+DATA <- DATA_proj %>%
+  mutate(cellfon2=ifelse(!is.na(cellfon3), 0, cellfon2)) %>%
+  mutate(cellphone=factor(ifelse(cellfon2==0,"No","Yes"))) %>%
+  mutate(GENDER=factor(ifelse(sex=="Female", "F", "M"))) %>%
+  mutate(Class=ifelse(income2 %in% c("Less than $75,000","$75,000 or more"),"upper-middle","middle")) %>%
+  mutate(Class=ifelse(income2 %in% c("Less than $10,000","Less than $15,000","Less than $20,000"),"lower",Class)) %>%
+  mutate(Class=factor(Class)) %>%
+  mutate(height3=as.numeric(as.character(height3))) %>%
+  mutate(weight2=as.numeric(as.character(weight2))) %>%
+  mutate(HEIGHT=floor(height3/100)*12+height3-100*floor(height3/100)) %>%
+  mutate(BMI = 703*weight2/HEIGHT^2) %>%
+  mutate(DISTRICT=ifelse(X_state%in%c("Maine","Massachusetts","New Hampshire","Rhode Island","Vermont","Connecticut"),"New Eng","Others")) %>%
+  mutate(DISTRICT=ifelse(X_state%in%c("Illinois","Indiana","Iowa","Michigan","Ohio","Wisconsin","Minnesota"),"Lakes",DISTRICT)) %>%
+  mutate(DISTRICT=ifelse(X_state%in%c("New York","Pennsylvania","Maryland","New Jersey","Delaware","District of Columbia"),"Pacific",DISTRICT)) %>%
+  mutate(DISTRICT=ifelse(X_state%in%c("Virginia","West Virginia","Kentucky","North Carolina","South Carolina","Georgia","Florida","Alabama","Louisiana","Mississippi","Tennessee","Arkansas","Missouri"),"South",DISTRICT)) %>%
+  mutate(DISTRICT=ifelse(X_state%in%c("Texas","Oklahoma","Kansas","Nebraska","South Dakota","North Dakota","Montana","Idaho","Wyoming","Utah","Colorado","Arizona","New Mexico","Alaska"),"Midwest",DISTRICT)) %>%
+  mutate(DISTRICT=ifelse(X_state%in%c("California","Oregon","Washington","Nevada","Hawaii"),"West",DISTRICT)) 
+
+# remove missing data and outliers
+DATA <- DATA %>%
+  filter(weight2<=330, HEIGHT<=80, sleptim1>1, BMI>10, BMI<40) %>%
+  filter(!is.na(menthlth), !is.na(sleptim1), !is.na(children), !is.na(Class)) %>%
+  filter(!is.na(DISTRICT), !is.na(BMI), !is.na(GENDER), !is.na(internet), !is.na(cellphone)) %>%
+  filter(!is.na(smoke100), !is.na(maxdrnks), !is.na(fruit1), !is.na(vegetab1)) %>%
+  filter(!is.na(X_race), !is.na(exeroft1), !is.na(X_educag), !is.na(medcost)) 
+
+# rearrange the data frame
+DATA <- DATA %>%
+  select(menthlth, DISTRICT, X_race, GENDER, X_educag, Class, cellphone, 
+         internet, medcost, BMI, children, sleptim1, smoke100, maxdrnks, 
+         fruit1, vegetab1, exeroft1)
+save(DATA, file="DATA_cleaned.RData")
+```
+
+After removing missing data and obvious outliers (e.g. averagely sleeping one hour per day during the past month), we now work with a dataset of $17$ columns and $9673$ rows. It then is split into five subsets of roughly equal size to prepare for the cross-validation later.
+
+```{r split, include=TRUE, echo=TRUE}
+# k-fold cross validation
+k <- 5
+set.seed(222)
+# split the sample IDs into k subsets
+N <- nrow(DATA)
+n <- floor(N/k)
+ID <- list()
+pool <- 1:N
+for (i in 1:(k-1))
+{
+  ID[[i]] <- sample(pool, n, replace=FALSE)
+  pool <- setdiff(pool,ID[[i]])
+}
+ID[[k]] <- pool
+rm(pool)
+```
+
+
+## Response Variable and ZINB
+
+Our response variable, `menthlth`, is distributed in a peculiar shape, in that (i) there is a fat tail and (ii) about half of the response are zeros. The ordinary models for count data, such as Poisson regression and binomial regression, are therefore no more suitable. To address the overdispersion and the excess of zeros, we decide to model `menthlth` with the **zero-inflated negative binomial (ZINB)** regression.
+
+```{r mental, echo=TRUE, include=TRUE}
+# plot the histogram of the number of days feeling mentally unhealthy
+ggplot(data=DATA, aes(x=menthlth)) +
+  geom_histogram(binwidth=1) + 
+  xlab("Number of Days feeling Mentally Unhealthy") +
+  ggtitle("Histogram of Mental Health")
+# compute the proportion of respondents who don't feel mentally unhealthy at all
+prop <- nrow(DATA %>% filter(menthlth==0)) / N
+prop <- round(prop, digits=4)
+cat(100*prop,"% of the responses are zeros.")
+```
+
+In ZINB, the zero responses are not only contributed by the count process but also a binary process. The latter indicates whether or not an individual is genetically susceptible to mental illness and/or under detrimental circumstances, which we plan to predict by the logistic regression with long-term  to permanent factors, such as gender, income, race, and so on. The former only applies when the latter "succeeds" and communicates how many mentally unhealthy days that the intrinsic or extrinsic adversity would elicit in a month, which we intend to predict by the negative binomial regression majorly with short-term to mid-term factors, such as diet, BMI, exercises, and so on.
+
+Suppose the $j^{th}$ respondent is exposed to triggering circumstances with probability $\pi_j$ and feels mentally unhealthy in $Y_j$ days during the past month, then
+\[
+\begin{cases}
+P(W_j=1)=\pi_j
+\\
+P(W_j=0) = 1 - \pi_j \\
+\end{cases}
+\]
+where $W_j$ is the binary indicator of exposure, and 
+\[
+\begin{align*}
+P(Y_j=0) &= P(W_j=0) \times P(Y_j=0|W_j=0) + P(W_j=1) \times P(Y_j=0|W_j=1) \\
+&= (1-\pi_j) \times 1 \; + \; \pi_j \times p_j^{r_j}
+\end{align*}
+\]
+\[
+\begin{align*}
+P(Y_j=k)&=P(W_j=0) \times P(Y_j=k|W_j=0) + P(W_j=1) \times P(Y_j=k|W_j=1) \\
+&= 0 + \pi_j \cdot P(Y_j=k|W_j=1) \\
+&= \pi_j \cdot \binom{k+r_j-1}{r_j-1}p_j^{r_j}(1-p_j)^k
+\end{align*}
+\]
+in which $k>0$ and $Y_j|W_j=1$ follows the negative binomial distribution $NB(r_j,p_j)$. 
+
+\[
+E(Y_j) = \pi_j \cdot E(Y_j | W_j = 1) = \frac{\pi_j p_j r_j}{1 - p_j}
+\]
+
+In short, there are three parameters that link the response to the predictors, namely, $\pi$, $r$, and $p$. Note that the interpretation of $r$ and $p$ is not straightforward. But if we assume that $r$ independent steps are required to conquer the psychological difficulties and one is equally likely to succeed in each attempt at each step, the negative binomial model is not outrageously unreasonable.
+
+## Exploratory Data Analysis
+
+The purpose of exploratory data analysis (EDA) is a rough idea of the dependency of the response upon each predictor and the interrelationship among predictors, so that the pool of candidates might be reduced to more managable size.
+
+### Numerical Predictors
+
+```{r ggpairs numerical, include=TRUE, echo=TRUE}
+# Explore the distributions of and correlations between numerical variables
+ggpairs(DATA, columns=c(10:12,14:17))
+```
+
+Other than the plausible correlation between `fruit1` and `vegetab1`, and the possible correlations between `exeroft1` and them, no colinearity among these numerical explanatory variables are found. We thereby construct by **principal component analysis (PCA)** a new variable, `DIET`, to extract $70\%$ of the variances from `fruit1` and `vegetab1`.
+
+```{r pca, include=TRUE, echo=TRUE}
+# project two variables onto a one-dimensional subspace
+diet.pca <- prcomp(DATA[,15:16], center = TRUE,scale. = TRUE)
+# add the projection to the dataset
+DATA <- DATA %>% 
+  mutate(DIET = diet.pca$x[,1])
+# check how much variance the projection can explain
+summary(diet.pca)
+```
+
+It becomes meaningless to compute the correlations between `menthlth` and each predictor as their relationships in ZINB regression are not presumed to be linear any more. Besides, scatterplots hardly display any patterns, regardless of continuous or discrete predictors. This might be resulted by the discreteness and the extreme skewedness of `menthlth`.
+
+```{r scatterplots, include=TRUE, echo=TRUE}
+# plot menthlth against BMI
+g1 <- ggplot(DATA, aes(x=BMI,y=menthlth)) +
+        geom_jitter(color="darkolivegreen") +
+        ylab("Number of Days") + 
+        ggtitle(label=paste("Mentally Unhealthy Days \n against BMI"),
+                subtitle="Continuous Predictor")
+# plot menthlth against children
+g2 <- ggplot(DATA, aes(x=children,y=menthlth)) +
+        geom_jitter(color="darkblue") +
+        ylab("Number of Days") +
+        xlab("Number of Children") +
+        ggtitle(label=paste("Mentally Unhealthy Days \n against Children"),
+                subtitle="Discrete Predictor")
+grid.arrange(g1,g2,nrow=1)
+```
+
+
+### Categorical Predictors
+
+Two of the pairwise segmented barplots among categorical predictors suggest statistical dependency between `Class`and `smoke100`, and between `GENDER` and `X_educag`. In specific, the higher the socio-economic class, the fewer people smoke during the past $100$ days. And a larger proportion of females have at least obtained some post-secondary education than males have. Given the sample size, $N=9673$, the differences are rather considerable.
+
+```{r segmented barplots, include=TRUE, echo=TRUE}
+# plot smoke100 against socioeconomic class
+g3 <- ggplot(DATA, aes(x=Class,fill=smoke100)) + 
+        geom_bar() +
+        xlab("Socio-Economic Class") +
+        ggtitle("Distribution of Smokers \n across Socio-Economic Class")
+# plot education against gender
+g4 <- ggplot(DATA, aes(x=GENDER,fill=X_educag)) + 
+        geom_bar() +
+        ggtitle("Distribution of Education Levels \n across Gender")
+grid.arrange(grobs=list(g3,g4), widths=c(1.7,2.2), layout_matrix=matrix(c(1,2),nrow=1,ncol=2))
+```
+
+That said, we decide to retain all of these four predictors and be wary. This is to avoid premature information loss as they describe an individual from distinct perspectives. We do expect at least one to be insignificant when a pair are regressed upon.
+
+Furthermore, `DISRICT` and `X_race` are excluded from the candidates as `menthlth` only fluctuates negligibly across their levels compared to the intrinsic volatility.
+
+```{r categorical, include=TRUE, echo=TRUE}
+# summarize the average and standard deviation
+# across levels of DISTRICT
+DATA %>%
+  group_by(DISTRICT) %>%
+  summarise(count=n(), avg_mental=mean(menthlth), sd_mental=sd(menthlth))
+# summarize the average and standard deviation
+# across levels of race
+DATA %>%
+  group_by(X_race) %>%
+  summarise(count=n(), avg_mental=mean(menthlth), sd_mental=sd(menthlth))
+```
+
+
+### Numerical VS Categorical
+
+We also investigate a few possibilities of numerical explanatory variables depending upon categorical ones. Do smokers drink more alcohol as well? Are people in higher socio-economic class in favor of harder sports? Would female eat healthier? Is the use of internet squeezing out the sleeping time? These questions are brought up on basis of commonsense, yet the barplots provide no marked evidence.
+
+```{r boxplots, include=TRUE, echo=TRUE}
+g5 <- ggplot(DATA, aes(x=Class, y=exeroft1)) +
+  geom_boxplot() +
+  xlab("Socio-Economic Class") +
+  ylab("Intensity of Exercises")
+
+g6 <- ggplot(DATA, aes(x=internet, y=sleptim1)) +
+  geom_boxplot() +
+  ylab("Sleeping Hours per day")
+
+g7 <- ggplot(DATA, aes(x=smoke100, y=maxdrnks)) +
+  geom_boxplot() +
+  ylab("Max Glasses of \n Alcohol per day")
+
+g8 <- ggplot(DATA, aes(x=GENDER, y=DIET)) + 
+  geom_boxplot()
+
+grid.arrange(grobs=list(g5,g6,g7,g8), widths=c(1,1), layout_matrix=matrix(1:4,nrow=2,ncol=2))
+```
+
+
+As a result, we manage to prune the candidates to be six numerical and seven categorical variables.
+
+NUMERICAL    | Description                                                                        
+-------------|----------------------------------------------------------------------------------
+`BMI`        |The body mass index that reflects the relationship between height and weight           
+`children`   |The number of children one has                                                     
+`sleptim1`   |The average number of hours one sleeps per day during the past month               
+`maxdrnks`   |The maximum number of glasses of alcohol one drinks per day during the past month 
+`DIET`       |The index constructed by PCA from `fruit1` and `vegetab1`          
+`exeroft1`   |The average intensity of exercises during the past month 
+
+CATEGORICAL   | Description
+--------------|-------------------------------------------------------------------------
+`GENDER`      | The biological gender
+`X_educag`    | The highest education level ones has completed
+`Class`       | The Socio-Economic Class determined by annual family income 
+`cellphone`   | Whether one owns a personal cellphone
+`internet`    | Whether one accesses the internet during the past month
+`medcost`     | Whether one has unpaid medical bills
+`smoke100`    | Whether one smokes during the past 100 days
+
+## Backward Model Selection
+
+We start with the full model and drop the most insignificant predictor, if any, until every p-value is sufficiently small. As psychologists recommend, the full model will include the **interaction** between `GENDER` and `children`, `GENDER` and `sleptim1`, `GENDER` and `smoke100`, and `BMI` and `maxdrnks`.
+
+Again, the central idea is to use long-term to permanent factors for the binary process and short-term to mid-term factors for the count process in **ZINB regression**.
+
+```{r m1, include=TRUE, echo=TRUE}
+# randomly pick one subset for testing
+# select model with the rest of observations
+set.seed(999)
+j <- sample(1:k, 1)
+TRAIN <- DATA[setdiff(1:N,ID[[j]]),]
+# train the full model
+m1 <- zeroinfl(menthlth ~ GENDER + children + BMI + sleptim1 + maxdrnks + DIET + exeroft1 +
+                 GENDER:children + GENDER:sleptim1 + BMI:maxdrnks
+               | GENDER + X_educag + Class + cellphone + internet + medcost + smoke100 + BMI +
+                 GENDER:smoke100,
+               data = TRAIN, dist = "negbin", EM = TRUE)
+summary(m1)
+```
+
+Not to our surprise, `X_educag` is among the insignificant predictors whereas `GENDER` is extraordinarily significant. Dropping the interaction between `GENDER` and `children`  since it is associated with the largest insignificant p-value, we then pass on the rest of candidates to the next step.
+
+```{r m2, include=TRUE, echo=TRUE}
+m2 <- zeroinfl(menthlth ~ GENDER + children + BMI + sleptim1 + maxdrnks + DIET + exeroft1 +
+                 GENDER:sleptim1 + BMI:maxdrnks
+               | GENDER + X_educag + Class + cellphone + internet + medcost + smoke100 + BMI +
+                 GENDER:smoke100,
+               data = TRAIN, dist = "negbin", EM = TRUE)
+summary(m2)
+```
+
+By similar argument, we discard `GENDER` in the negative binomial regression and proceed. Note that the interaction between `GENDER` and `sleptim1` would be pointless without `GENDER`, so `GENDER:sleptim1` is also deleted.
+
+```{r m3, include=TRUE, echo=TRUE}
+m3 <- zeroinfl(menthlth ~ children + BMI + sleptim1 + maxdrnks + DIET + exeroft1 +
+                 BMI:maxdrnks
+               | GENDER + X_educag + Class + cellphone + internet + medcost + smoke100 + BMI +
+                 GENDER:smoke100,
+               data = TRAIN, dist = "negbin", EM = TRUE)
+summary(m3)
+```
+
+`DIET` ought to be excluded at this step. Even though one level of `X_educag` gives larger p-value, we want to be safe and only look at the smallest p-value associated with a factor.
+
+```{r m4, include=TRUE, echo=TRUE}
+m4 <- zeroinfl(menthlth ~ children + BMI + sleptim1 + maxdrnks + exeroft1 + BMI:maxdrnks
+               | GENDER + X_educag + Class + cellphone + internet + medcost + smoke100 + BMI +
+                 GENDER:smoke100,
+               data = TRAIN, dist = "negbin", EM = TRUE)
+summary(m4)
+```
+
+All p-values associated with the negative binomial regression component have become sufficiently small. Now we eliminate `cellphone` for the logistic regression and continue the backward selection.
+
+```{r m5, include=TRUE, echo=TRUE}
+m5 <- zeroinfl(menthlth ~ children + BMI + sleptim1 + maxdrnks + exeroft1 + BMI:maxdrnks
+               | GENDER + X_educag + Class + internet + medcost + smoke100 + BMI +
+                 GENDER:smoke100,
+               data = TRAIN, dist = "negbin", EM = TRUE)
+summary(m5)
+```
+
+To further trim the model, `X_educag` is crossed out as the smallest p-value associated with it turns out to be greater than any other insignificant p-values.
+
+```{r m6, include=TRUE, echo=TRUE}
+m6 <- zeroinfl(menthlth ~ children + BMI + sleptim1 + maxdrnks + exeroft1 + BMI:maxdrnks
+               | GENDER + Class + internet + medcost + smoke100 + BMI +
+                 GENDER:smoke100,
+               data = TRAIN, dist = "negbin", EM = TRUE)
+summary(m6)
+```
+
+And finally, we drop the interaction between `GENDER` and `smoke100`, and obtain the model in which all explanatory variables are significant. 
+
+```{r m7, include=TRUE, echo=TRUE}
+m7 <- zeroinfl(menthlth ~ children + BMI + sleptim1 + maxdrnks + exeroft1 + BMI:maxdrnks
+               | GENDER + Class + internet + medcost + smoke100 + BMI,
+               data = TRAIN, dist = "negbin", EM = TRUE)
+summary(m7)
+```
+
+
+The final **ZINB** model regresses upon the following predictors for the binary process and the count process respectively.
+
+Binary Process | Description
+---------------|-------------------------------------------------------------------------------
+`GENDER`       | The biological gender
+`Class`        | The socio-economic class determined by annual family income
+`internet`     | Whether one accesses the internet during the past month
+`medcost`      | Whether one has unpaid medical bills
+`smoke100`     | Whether one smokes during the past 100 days
+`BMI`          | The body mass index that reflects the relationship between height and weight
+
+Count Process | Description
+--------------|--------------------------------------------------------------------------------
+`children`    | The number of children one has
+`BMI`         | The body mass index that reflects the relationship between height and weight
+`sleptim1`    | The average number of hours one sleeps per day during the past month
+`maxdrnks`    | The maximum number of glasses of alcohol one drinks per day during the past month
+`exeroft1`    | The average intensity of exercise during the past month
+`BMI:maxdrnks`| The interaction between `BMI` and `maxdrnks`
+
+## Residuals & Singular Points
+
+In spite of the increasing underestimation for more severe mental problems, the residuals are mostly concentrated within an acceptable range; that is to say, predictions are only accurate for mild to no conditions.
+
+```{r residuals, include=TRUE, echo=TRUE}
+par(mfrow=c(2,1))
+# plot raw residuals against menthlth
+plot(x=jitter(TRAIN$menthlth), y=m7$residuals, col="darksalmon", cex=0.8,
+     ylab="Raw Residuals", xlab="Number of Mentally Unhealthy Days in a month",
+     main="Residuals Plots")
+# add the reference line: h=0
+abline(h=c(0,-10,10), col="red", lty=c(1,2,2))
+# plot Pearson residuals against menthlth
+plot(x=jitter(TRAIN$menthlth), y=resid(m7,type="pearson"), col="darkolivegreen", cex=0.8,
+     ylab="Pearson Residuals", xlab="Number of Mentally Unhealthy Days in a month")
+# add the ref line: h=0
+abline(h=0, col="darkorange")
+```
+
+The singular point at the bottom-left of the raw residuals plot catches our attention --- a respondent who self-reports to be completely fine is predicted to be mentally compromised for over $20$ days in a month. By looking into his case, we learn that he is a lower-class smoker who misses the higher education, uses cellphone and internet, drinks a lot of alcohol, and bears unpaid medical bills, all explaining the curious prediction. Yet the sleeping time contributes exceptionally. Could anybody survive from averagely sleeping two hours per day for a month? Is this record an error? Or more importantly, given all these detrimental factors, is he hiding his mental problems in the interview? 
+
+However, the respondent also exercises astonishingly intensely (a hard laborer, perhaps) and maintains perfect BMI. Incorporating the fact that some people are just genetically resistant to psychological damages, we conclude that this case is possible, albeit improbable, and should not be abandoned.
+
+```{r singular, include=TRUE, echo=TRUE}
+TRAIN[which(m7$residuals <= -20), ]
+```
+
+
+## Cross Validation
+
+To evaluate how well the final model fits the training data and generalizes to new data, we repeat the fitting $k=5$ times, each time treating a different subset as the validation data and merging the other subsets as the training data. By doing so, all observations are used for both training and validation, and each observation is used for validation exactly once. We then assess the model performance by the square root of the mean squared error, both for fitting and for predicting.
+
+```{r CV, include=TRUE, echo=TRUE}
+# repeat training and validation k times
+# each time using the ith subset as validation data
+# record sqrt(MSE) in every run
+error_fitted <- c()
+error_pred <- c()
+days_fitted <- list()
+days_pred <- list()
+model <- list()
+for (i in 1:k)
+{
+  TRAIN <- DATA %>% slice(setdiff(1:nrow(DATA),ID[[i]]))
+  TEST <- DATA[ID[[i]],]
+  model[[i]] <- zeroinfl(menthlth ~ children + BMI + sleptim1 + maxdrnks + exeroft1 + BMI:maxdrnks
+                                   | GENDER + Class + internet + medcost + smoke100 + BMI,
+                         data = TRAIN, dist = "negbin", EM = TRUE)
+  days_fitted[[i]] <- predict(model[[i]],TRAIN)
+  error_fitted[i] <- sqrt(sum((days_fitted[[i]]-TRAIN$menthlth)^2)/nrow(TRAIN))
+  days_pred[[i]] <- predict(model[[i]], TEST)
+  error_pred[i] <- sqrt(sum((days_pred[[i]]-TEST$menthlth)^2)/nrow(TRAIN))
+}
+print(data.frame(Error_fitted=error_fitted, Error_predicted=error_pred))
+```
+
+Judged by the insubstantial fluctuation in each column above, the predictions made by our final model are rather reliable. Nevertheless, it calls for caution that the validation errors are strikingly smaller than the training errors in every run. It could be simply due to sample sizes; if the model cannot account for certain patterns among the data, adding more samples always results in greater unexplained variances.
+
+In fact, as shown in the figure below, the model fails to capture either the fat tail or the excess of zeros in the observations. 
+
+```{r histogram, include=TRUE, echo=TRUE}
+df1 <- data.frame(DAYS=DATA$menthlth)
+df2 <- data.frame(DAYS=predict(m7,DATA))
+df1$label <- "train"
+df2$label <- "predict"
+ggplot(rbind(df1,df2), aes(DAYS,fill=label)) + 
+  geom_histogram(alpha=1, binwidth=1) + 
+  xlab("The Number of Days Mentally Unhealthy in a month") +
+  ggtitle("Histograms of Predictions against Training Data")
+```
+
+The most powerful risk factors (e.g. genes and family history of diseases) have not been gathered by the GSS. Not surprisingly, there is a notable portion of variances that cannot be explained away no matter how good the model is. Given the poor availability of genetic and medical data in general, we propose to assist in identifying vulnerable young Americans with the GSS data to any feasible extent. 
+
+In addition, automatic detection always comes down to a judgment --- whether one needs to see a doctor or not. Since National Institute of Mental Health advise people who feel mentally compromised for more than five days within a month to seek professional help,[^5] we can also employ this threshold to make binary decision about the mental states of respondents. 
+
+[^5]: https://www.nimh.nih.gov/health/education-awareness/index.shtml
+
+```{r diagnosis, include=TRUE, echo=TRUE}
+DATA <- DATA %>%
+  mutate(DIAGNOSIS=factor(ifelse(menthlth<4,"fine","ill"))) %>%
+  mutate(predict = predict(m7,DATA)) %>%
+  mutate(PREDICT=factor(ifelse(predict<4, "negative","positive")))
+# construct a contingency table
+TAB <- table(DATA$PREDICT, DATA$DIAGNOSIS)
+print(TAB)
+# compute sensitivity 
+cat("sensitivity:", round(TAB[2,2]/sum(TAB[,2]),digits=4), "\n")
+# compute specificity
+cat("specificity:", round(TAB[1,1]/sum(TAB[,1]),digits=4), "\n")
+```
+
+Both the sensitivity (probability of true positiveness) and the specificity (probability of true negativeness) turn out to be acceptable. In other words, approximately $65\%$ of the respondents who are indeed suffering from mental illness would be correctly detected by our model and advised to see doctors, without harassing too many healthy people and burdening medical workers overwhelmingly.
+
+## Interpretation
+
+We would like to highlight that the **ZINB model** consists of two components, the **logistic regression** for the binary process and the **negative binomial regression** for the count process. And each component involves a different set of explanatory variables --- say, $X$ and $Z$ --- respectively.
+
+\[
+E(Y_j) = \pi_j \cdot E(Y_j | W_j = 1) = \frac{\pi_j p_j r_j}{1 - p_j}
+\]
+
+### Logistic Regression
+
+In the binary process, the logit of $\pi_j=P(W_j=1)$ is linearly modelled by
+
+\[
+\log (\frac{\pi_j}{1 - \pi_j}) = \mathbf{X}_{(j)} \cdot \vec{\beta} + \epsilon_j
+\]
+\[
+\hat{\pi} = \frac{\exp(\mathbf{X} \hat{\beta})}{1 + \exp(\mathbf{X} \hat{\beta})}
+\]
+
+Therefore, the **intercept** $\beta_0 \approx -2.7205$ can be interpreted as that when BMI equals to $0$ (which is practically impossible) and all factors take the reference level, the probability of an American resident who is aged $18$ to $24$ being exposed to intrinsic or extrinsic triggering circumstances (i.e. $W=1$) is $\pi_0 = \exp{(\beta_0)}/(1 + \exp{(\beta_0)}) \approx 0.0618$.
+
+The interpretations of the **slopes** concern the **odds** (i.e. $\pi / (1 - \pi)$) of such exposure. For instance, everything else held constant, the odds is expected to be multiplied by $\exp{(\beta_7) \approx 1.0224}$ for an additional unit of BMI on average. And the odds for a female, on average, is expected to be $\exp{(\beta_1) \approx 2.1583}$ times that for a male, everything else held constant.
+
+### Negative Binomial Regression
+
+In the count process, the expected days of feeling mentally unhealthy is logarithmatically linked to the linear combination of $\mathbf{Z}_{(j)}$.
+
+\[
+\log (\mathbf{E}[Y_j|W_j=1]) = \mathbf{Z}_{(j)} \cdot \vec{\gamma} + \delta_j
+\]
+
+$\hat{\gamma}$ has to be interpreted in terms of conditional expectation $E[Y|W=1]$. Given that an American resident aged $18$ to $24$ is exposed to triggering circumstances (i.e. $W=1$), the **intercept** $\gamma_0 \approx 1.9812 \approx \log (7.25)$ expresses the log of the expected number of days he or she feels mentally compromised in a month when other variables all take zeros (again, some cases are practically impossible).
+
+Conditional on $W=1$, the number of mentally disturbed days in a month is expected to be multiplied by $\exp (\gamma_1) \approx 1.0702$, on average, for one additional child that the young American has, holding other variables constant. The interpretation of the **slopes** is further complicated by the presence of **interaction**. Speciically, conditional on $W=1$, we expect an additional unit of BMI to multiply the expected number of mentally unhealthy days by $\exp (\gamma_2 + \gamma_6 \cdot \Delta) \approx \exp (0.0141 - 0.0017 \cdot \Delta)$, with $\Delta$ being the change in the number of glasses of alcohol that the young American drinks per day at maximum, averagely speaking and everything else held constant. We may also interpret the coefficients pertaining to the max number of drinks in a similar manner.
+
+## Conclusion
+
+In this case study, we aim at predicting the number of mentally disturbed days in a month, for American residents aged $18$ to $24$, from ten variables in the GSS data. Professional opinions of psychologists are taken into account and interaction among predictors considered. We opt for the zero-inflated negative binomial regression to address the overdispersion and the excess of zeros found in the response. Using backward selection, we obtain the final model in which every predictor is associated with significant p-values. 
+
+A few interesting findings present themselves in the results. For example, given psychological adversity, an increase in either BMI or the max number of drinks per day is expected to prolong the mentally unhealthy state when affecting alone; but such rise inclines to be less steep if they work simultaneously. Can alcohol relieve the anxiety of getting fat somehow? Is using diverse ways to handle bad mood healthier than using one exclusively? Moreover, dropping predictors itself could be revealing. It is widely presumed that the pressure of raising kids dominantly falls upon mothers, yet the lack of interaction between genders and the number of children tends not to support this prevalent view.
+
+Finally, it is practical to flag young Americans at high risk of mental problems based on the outputs generated by this model. Although more crucial information is not collected by the GSS, and thus the predictions are not pleasingly accurate, this model serves the goal of early intervention and offers a satisfying solution. All codes and data are accessible online.[^6]
+
+[^6]: https://github.com/PawinData/GLM
