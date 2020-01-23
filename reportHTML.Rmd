@@ -28,7 +28,7 @@ Although medical researchers found a first-degree relative with mental diseases 
 [^3]: https://www.bcmj.org/articles/early-detection-depression-young-and-elderly-people
 [^4]: https://gss.norc.org/
 
-In this case study, we build a **zero-inflated negative binomial (ZINB)** regression model to predict the number of days in a month that one feels mentally unhealthy and at least possibly seeks for help, using the GSS data. The analysis focuses on American residents aged $18$ to $24$ only, since disease patterns differ remarkablly across age groups. We then show by a $5$-fold cross-validation that our model makes reasonably reliable predictions and promotes decisionmaking.
+In this case study, we build a **zero-inflated negative binomial (ZINB)** regression model to predict the number of days in a month that one feels mentally unhealthy and at least possibly seeks for help, using the GSS data. The analysis focuses on American residents aged $18$ to $24$ only, since disease patterns differ remarkably across age groups. We then show by a $5$-fold cross-validation that our model makes reasonably reliable predictions and promotes decision-making.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -42,7 +42,7 @@ library(pscl)
 
 ```{r prep, include=TRUE, echo=TRUE, results='hide', warning=FALSE}
 # load the original dataset
-load("F:/MOOC/Data Science/R/brfss2013.RData")
+load("brfss2013.RData")
 
 # select relevant variables and observations
 DATA_proj <- brfss2013 %>%
