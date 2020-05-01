@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import numpy as np
 from numpy.linalg import norm
@@ -41,3 +42,7 @@ iter_init = np.array([random() for ele in range(k)])
 CENTERS = dict()
 for sentiment in range(3):
     CENTERS[sentiment] = minimize(obj_func, x0=iter_init, args(P,ACCUM,sentiment),)
+    CENTERS[sentiment] = [float(element) for element in CENTERS[sentiment]]
+    
+with open("CENTERS.json", "w") as file:
+    file.write(json.dumps(CENTERS, indent=4))
