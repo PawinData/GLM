@@ -41,9 +41,9 @@ def obj_func(center, P, ACCUM, sentiment):
 iter_init = np.array([random() for ele in range(k)])
 CENTERS = dict()
 for sentiment in range(3):
-    cnt = minimize(obj_func, x0=iter_init, args=(P, ACCUM, sentiment),)
-    CENTERS[sentiment] = cnt.tolist()
+    CENTERS[sentiment] = minimize(obj_func, x0=iter_init, args=(P, ACCUM, sentiment),)
     
+np.save("CENTERS.npy", CENTERS)
 with open("CENTERS.json", "w") as file:
     file.write(json.dumps(CENTERS, indent=4))
 
