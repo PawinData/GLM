@@ -33,7 +33,7 @@ P = U.dot(np.diag([norm(V_T[j,:])**2 for j in range(k)]))    # new representatio
 
 def obj_func(center, P, ACCUM, sentiment):
     d = 0
-    for row in range():
+    for row in range(ACCUM[sentiment-1],ACCUM[sentiment]):
         v = P[row,:]
         d += v.dot(center) / (norm(v) * norm(center))
         return(-d)
