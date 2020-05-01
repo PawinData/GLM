@@ -37,7 +37,7 @@ def obj_func(center, P, ACCUM, sentiment):
         return(-d)
         
 
-Bounds = [min(P[:,j]), max(P[:,j]) for j in range(k)]
+Bounds = [(min(P[:,j]), max(P[:,j])) for j in range(k)]
 CENTERS = dict()
 for sentiment in range(3):
     results = differential_evolution(obj_func, bounds=Bounds, args=(P,ACCUM,sentiment), maxiter=100000)
