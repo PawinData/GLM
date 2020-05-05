@@ -13,7 +13,7 @@ Airline = pd.read_csv("https://drive.google.com/uc?export=download&id=1HruH1PQRP
 Airline = Airline[["tweet_id", "airline_sentiment", "text"]]
 Airline.airline_sentiment = Airline.airline_sentiment.replace({"negative":0, "positive":1, "neutral":2})
 
-ID_train = json.load(open("https://raw.githubusercontent.com/PawinData/GLM/master/ID_train.json"))  # load ID of training set
+ID_train = json.load(open("ID_train.json"))  # load ID of training set
 Train = Airline.iloc[ID_train]
 Test = Airline.iloc[ID_test]
 Train = Train.sort_values(by=["airline_sentiment"])
