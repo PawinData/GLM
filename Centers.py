@@ -36,6 +36,13 @@ UU, SIGMA, VV_T = svds(Y, k)
 SIGMA = np.diag(SIGMA)
 PP = UU.dot(np.diag([norm(VV_T[j,:])**2 for j in range(k)]))
 
+def obj_func(center, P, ACCUM, sentiment):
+    d = 0
+    for row in range(ACCUM[sentiment-1], ACCUM[sentiment]):
+        v = P[row,:]
+        d += v.dot(center)/(norm(v)*norm(center))
+    return(-d)
+
 Centers = dict()
 Bounds = [(min(PP[:,j]), max(PP[:,j])) for j in range(k)]
 for sentiment in range(3):
