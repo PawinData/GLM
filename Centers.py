@@ -15,7 +15,7 @@ Airline.airline_sentiment = Airline.airline_sentiment.replace({"negative":0, "po
 
 ID_train = json.load(open("ID_train.json"))  # load ID of training set
 Train = Airline.iloc[ID_train]
-Test = Airline.iloc[ID_test]
+
 Train = Train.sort_values(by=["airline_sentiment"])
 truth = Train["airline_sentiment"].tolist()
 
