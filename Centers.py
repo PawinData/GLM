@@ -2,7 +2,6 @@ import json
 from random import sample
 from scipy.optimize import differential_evolution
 from sklearn.feature_extraction.text import TfidfVectorizer
-from scipy.sparse import save_npz
 from scipy.sparse.linalg import svds
 
 k = 500
