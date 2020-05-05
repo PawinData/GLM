@@ -1,4 +1,6 @@
 import json
+import numpy as np
+import pandas as pd
 from random import sample
 from scipy.optimize import differential_evolution
 from sklearn.feature_extraction.text import TfidfVectorizer
