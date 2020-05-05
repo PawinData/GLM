@@ -5,6 +5,7 @@ from random import sample
 from scipy.optimize import differential_evolution
 from sklearn.feature_extraction.text import TfidfVectorizer
 from scipy.sparse.linalg import svds
+from numpy.linalg import inv, norm
 
 k = 500
 
