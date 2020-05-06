@@ -50,7 +50,7 @@ Centers = dict()
 Bounds = [(min(PP[:,j]), max(PP[:,j])) for j in range(k)]
 for sentiment in range(3):
     print("start an optimization.")
-    res = differential_evolution(obj_func, bounds=Bounds, args=(PP,accum,sentiment), maxiter=100000)
+    res = differential_evolution(obj_func, bounds=Bounds, args=(PP,accum,sentiment), maxiter=10000)
     print("an optimization is done")
     Centers[sentiment] = res.x 
     # numpy arrays --> lists for storing in json file
