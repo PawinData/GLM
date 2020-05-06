@@ -60,7 +60,7 @@ print("objective function defined")
 Centers = dict()
 for sentiment in range(3):
     print("start an optimization")
-    result = minimize(obj_f, x0=Centroids[sentiment], args=(PP[Train_ID[sentiment,], sentiment),)
+    result = minimize(obj_f, x0=Centroids[sentiment], args=(PP[Train_ID[sentiment,]], sentiment),)
     Centers[sentiment] = result.x
     Centers[sentiment] = [ele for ele in Centers[sentiment]]
     print("end an optimization")
