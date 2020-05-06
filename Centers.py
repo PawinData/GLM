@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import json
 from numpy.linalg import norm
+from numpy import save, load, save_compressed
 from scipy.sparse.linalg import svds
 from scipy.optimize import minimize
 
