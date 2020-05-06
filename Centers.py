@@ -35,6 +35,7 @@ accum = {-1:0, 0:counts[0], 1:counts[0]+counts[1], 2:counts[0]+counts[1]+counts[
 UU, SIGMA, VV_T = svds(Y, k)
 SIGMA = np.diag(SIGMA)
 PP = UU.dot(np.diag([norm(VV_T[j,:])**2 for j in range(k)]))
+print("SVD is done.")
 
 def obj_func(center, P, ACCUM, sentiment):
     d = 0
@@ -42,11 +43,15 @@ def obj_func(center, P, ACCUM, sentiment):
         v = P[row,:]
         d += v.dot(center)/(norm(v)*norm(center))
     return(-d)
-
+    
+print("Objective Function is defined.")
+    
 Centers = dict()
 Bounds = [(min(PP[:,j]), max(PP[:,j])) for j in range(k)]
 for sentiment in range(3):
+    print("start an optimization.")
     res = differential_evolution(obj_func, bounds=Bounds, args=(PP,accum,sentiment), maxiter=100000)
+    print("an optimization is done")
     Centers[sentiment] = res.x 
     # numpy arrays --> lists for storing in json file
     Centers[sentiment] = [float(ele) for ele in Centers[sentiment]]  
